@@ -104,18 +104,18 @@ def calibrate_gauge(gauge_number, file_type):
 
     #get user input on min, max, values, and units
     print 'gauge number: %s' %gauge_number
-    min_angle = raw_input('Min angle (lowest possible angle of dial) - in degrees: ') #the lowest possible angle
-    max_angle = raw_input('Max angle (highest possible angle) - in degrees: ') #highest possible angle
-    min_value = raw_input('Min value: ') #usually zero
-    max_value = raw_input('Max value: ') #maximum reading of the gauge
-    units = raw_input('Enter units: ')
+    # min_angle = raw_input('Min angle (lowest possible angle of dial) - in degrees: ') #the lowest possible angle
+    # max_angle = raw_input('Max angle (highest possible angle) - in degrees: ') #highest possible angle
+    # min_value = raw_input('Min value: ') #usually zero
+    # max_value = raw_input('Max value: ') #maximum reading of the gauge
+    # units = raw_input('Enter units: ')
 
     #for testing purposes: hardcode and comment out raw_inputs above
-    # min_angle = 45
-    # max_angle = 320
-    # min_value = 0
-    # max_value = 200
-    # units = "PSI"
+    min_angle = 110
+    max_angle = 255
+    min_value = 0
+    max_value = 250
+    units = "PSI"
 
     return min_angle, max_angle, min_value, max_value, units, x, y, r
 
@@ -124,7 +124,18 @@ def get_current_value(img, min_angle, max_angle, min_value, max_value, x, y, r, 
     #for testing purposes
     #img = cv2.imread('gauge-%s.%s' % (gauge_number, file_type))
 
-    gray2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    lower_range = np.array([15, 30, 70], dtype=np.uint8)
+    upper_range = np.array([35, 50, 110], dtype=np.uint8)
+
+    hsv = cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
+# 98 42 26
+    mask = cv2.inRange(img, lower_range, upper_range)
+ 
+    cv2.imwrite('gauge-%s-red.%s' % (gauge_number, file_type), hsv)
+    cv2.imwrite('gauge-%s-mask.%s' % (gauge_number, file_type), mask)
+
+    gray2 = mask
+    # gray2 = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # Set threshold and maxValue
     thresh = 175
@@ -146,46 +157,59 @@ def get_current_value(img, min_angle, max_angle, min_value, max_value, x, y, r, 
     th, dst2 = cv2.threshold(gray2, thresh, maxValue, cv2.THRESH_BINARY_INV);
 
     # found Hough Lines generally performs better without Canny / blurring, though there were a couple exceptions where it would only work with Canny / blurring
-    #dst2 = cv2.medianBlur(dst2, 5)
-    #dst2 = cv2.Canny(dst2, 50, 150)
-    #dst2 = cv2.GaussianBlur(dst2, (5, 5), 0)
+    dst2 = cv2.medianBlur(dst2, 5)
+    dst2 = cv2.Canny(dst2, 50, 150)
+    dst2 = cv2.GaussianBlur(dst2, (5, 5), 0)
 
     # for testing, show image after thresholding
     cv2.imwrite('gauge-%s-tempdst2.%s' % (gauge_number, file_type), dst2)
 
     # find lines
-    minLineLength = 10
+    minLineLength = 30
     maxLineGap = 0
     lines = cv2.HoughLinesP(image=dst2, rho=3, theta=np.pi / 180, threshold=100,minLineLength=minLineLength, maxLineGap=0)  # rho is set to 3 to detect more lines, easier to get more then filter them out later
 
-    #for testing purposes, show all found lines
+    # for testing purposes, show all found lines
     # for i in range(0, len(lines)):
-    #   for x1, y1, x2, y2 in lines[i]:
-    #      cv2.line(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    #      cv2.imwrite('gauge-%s-lines-test.%s' %(gauge_number, file_type), img)
+    #     for x1, y1, x2, y2 in lines[i]:
+    #         cv2.line(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    #         cv2.imwrite('gauge-%s-lines-test.%s' %(gauge_number, file_type), img)
 
     # remove all lines outside a given radius
     final_line_list = []
+    final_line_list.append([])
     #print "radius: %s" %r
 
     diff1LowerBound = 0.15 #diff1LowerBound and diff1UpperBound determine how close the line should be from the center
     diff1UpperBound = 0.25
     diff2LowerBound = 0.5 #diff2LowerBound and diff2UpperBound determine how close the other point of the line should be to the outside of the gauge
     diff2UpperBound = 1.0
+
+    previousDist = 5000
+
+    print "centerX = " + str(x) + " centerY = " + str(y)
+
     for i in range(0, len(lines)):
         for x1, y1, x2, y2 in lines[i]:
             diff1 = dist_2_pts(x, y, x1, y1)  # x, y is center of circle
             diff2 = dist_2_pts(x, y, x2, y2)  # x, y is center of circle
             #set diff1 to be the smaller (closest to the center) of the two), makes the math easier
-            if (diff1 > diff2):
-                temp = diff1
-                diff1 = diff2
-                diff2 = temp
-            # check if line is within an acceptable range
-            if (((diff1<diff1UpperBound*r) and (diff1>diff1LowerBound*r) and (diff2<diff2UpperBound*r)) and (diff2>diff2LowerBound*r)):
-                line_length = dist_2_pts(x1, y1, x2, y2)
-                # add to final list
-                final_line_list.append([x1, y1, x2, y2])
+            print "centerX = " + str(x) + " centerY = " + str(y) + " x1 = " + str(x1) + " y1 = " + str(y1) + " x2 = " + str(x2) + " y2 = " + str(y2)
+            # print "diff1 = " + str(diff1) + " diff2 = " + str(diff2)
+            if (diff1 < previousDist or diff2 < previousDist):
+                previousDist = min(diff1, diff2)
+                print "FINALIST diff1 = " + str(diff1) + " diff2 = " + str(diff2)
+                final_line_list[0] = [x1, y1, x2, y2]
+
+            # if (diff1 > diff2):
+            #     temp = diff1
+            #     diff1 = diff2
+            #     diff2 = temp
+            # # check if line is within an acceptable range
+            # if (((diff1<diff1UpperBound*r) and (diff1>diff1LowerBound*r) and (diff2<diff2UpperBound*r)) and (diff2>diff2LowerBound*r)):
+            #     line_length = dist_2_pts(x1, y1, x2, y2)
+            #     # add to final list
+            #     final_line_list.append([x1, y1, x2, y2])
 
     #testing only, show all lines after filtering
     # for i in range(0,len(final_line_list)):
